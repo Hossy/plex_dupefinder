@@ -31,3 +31,17 @@ Alternatively, users can pass the `--skip-other-dupes` parameter from the comman
 ## Docker Image Support
 
 A Dockerfile is provided with Plex Dupefinder, allowing users to build a local image for running Plex Dupefinder instead of installing additional software locally. This enhances portability and simplifies the deployment process, enabling users to run Plex Dupefinder in various environments without additional dependencies. For detailed instructions on building and using the Docker image, please see `Dockerfile_README.md`.
+
+## Additional Scoring Options
+
+Three additional options (`SCORE_VIDEOBITRATE`, `SCORE_AUDIOCHANNELS`, and `VIDEO_HEIGHT_MULTIPLIER`) have been added in the `config.json` that allow customization of how each of those metadata components impact the score of an item. 
+
+`SCORE_AUDIOCHANNELS` is the simplest with a simple true/false definition that adds score value based on the number of audio channels that exist in the file or not. 
+
+`VIDEO_HEIGHT_MULTIPLIER` is the next simplest as it enables adjusting just how much the height (i.e. the "1080" in a 1920x1080 resolution video) impacts the overall score. This allows for example a 1920x1080 video that is otherwise similar to a 1920x800 video to score much higher. The default & original value for this attribute is 2.
+
+`SCORE_VIDEOBITRATE` combines both of these aspects into a single dictionary definiton. This can easily be toggled off entirely by changing **enabled** to `false` or the multiplier can be adjusted from the default setting of `2` if desired.
+
+## Activity Log Date & Timezone
+
+The `activity.log` file now tracks the date of every line as well as the timezone defined in the `config.json` file. The default value is UTC which mirrors the original script's functionality, if you would like to see the logs reported in a different timezone (such as the one your server is hosted in), update the `LOGGING_TIMEZONE` config value to match the **TZ_Identifier** from the table in [this wikipedia page](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones). This will properly align with any shifts for daylight savings time.

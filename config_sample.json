@@ -1,4 +1,5 @@
 {
+  "LOGGING_TIMEZONE": "UTC",
   "AUDIO_CODEC_SCORES": {
     "Unknown": 0,
     "aac": 1000,
@@ -42,6 +43,12 @@
   "PLEX_SERVER": "https://plex.your-server.com",
   "PLEX_TOKEN": "",
   "SCORE_FILESIZE": true,
+  "SCORE_VIDEOBITRATE": {
+    "enabled": true,
+    "multiplier": 2
+  },
+  "SCORE_AUDIOCHANNELS": true,
+  "VIDEO_HEIGHT_MULTIPLIER": 2,
   "SKIP_LIST": [],
   "VIDEO_CODEC_SCORES": {
     "Unknown": 0,

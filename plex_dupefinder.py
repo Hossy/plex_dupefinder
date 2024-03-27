@@ -7,10 +7,10 @@ import sys
 import time
 import argparse
 from fnmatch import fnmatch
-
 from tabulate import tabulate
-
 from config import cfg
+from datetime import datetime
+from pytz import timezone
 
 try:
     from urlparse import urljoin
@@ -24,14 +24,26 @@ import requests
 # INIT
 ############################################################
 
+# Configure Logger Timezone 
+tz_str=cfg['LOGGING_TIMEZONE']
+tz=timezone(tz_str)
+tz_abbr = datetime.now(tz).strftime('%Z')
+utc_offset = int(datetime.now(tz).strftime('%z')) // 100
+log_tz = {'timezone': tz_abbr, 'utc_offset': utc_offset}
+
+
 # Setup logger
+logging.Formatter.converter = lambda *args: datetime.now(tz=tz).timetuple()
 log_filename = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), 'activity.log')
 logging.basicConfig(
     filename=log_filename,
     level=logging.DEBUG,
-    format='[%(asctime)s] %(levelname)s - %(message)s',
-    datefmt='%H:%M:%S'
+    format='[%(asctime)s %(timezone)s(%(utc_offset)s)] %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+
+
 logging.getLogger('urllib3.connectionpool').disabled = True
 log = logging.getLogger("Plex_Dupefinder")
 
@@ -59,6 +71,8 @@ def get_dupes(plex_section_name):
         for dupe in dupe_search_results:
             if any(x != dupe.locations[0] for x in dupe.locations):
                 dupe_search_results_new.remove(dupe)
+    
+    log.info("Plex Dupe Finder Start - %s Library", plex_section_name, extra=log_tz)
     return dupe_search_results_new
 
 
@@ -77,45 +91,47 @@ def get_score(media_info):
     for codec, codec_score in cfg['AUDIO_CODEC_SCORES'].items():
         if codec.lower() == media_info['audio_codec'].lower():
             score += int(codec_score)
-            log.debug("Added %d to score for audio_codec being %r", int(codec_score), str(codec))
+            log.debug("Added %d to score for audio_codec being %r", int(codec_score), str(codec), extra=log_tz)
             break
     # score video codec
     for codec, codec_score in cfg['VIDEO_CODEC_SCORES'].items():
         if codec.lower() == media_info['video_codec'].lower():
             score += int(codec_score)
-            log.debug("Added %d to score for video_codec being %r", int(codec_score), str(codec))
+            log.debug("Added %d to score for video_codec being %r", int(codec_score), str(codec), extra=log_tz)
             break
     # score video resolution
     for resolution, resolution_score in cfg['VIDEO_RESOLUTION_SCORES'].items():
         if resolution.lower() == media_info['video_resolution'].lower():
             score += int(resolution_score)
-            log.debug("Added %d to score for video_resolution being %r", int(resolution_score), str(resolution))
+            log.debug("Added %d to score for video_resolution being %r", int(resolution_score), str(resolution), extra=log_tz)
             break
     # score filename
     for filename_keyword, keyword_score in cfg['FILENAME_SCORES'].items():
         for filename in media_info['file']:
             if fnmatch(os.path.basename(filename.lower()), filename_keyword.lower()):
                 score += int(keyword_score)
-                log.debug("Added %d to score for match filename_keyword %s", int(keyword_score), filename_keyword)
+                log.debug("Added %d to score for match filename_keyword %s", int(keyword_score), filename_keyword, extra=log_tz)
     # add bitrate to score
-    score += int(media_info['video_bitrate']) * 2
-    log.debug("Added %d to score for video bitrate", int(media_info['video_bitrate']) * 2)
+    if cfg['SCORE_VIDEOBITRATE']['enabled']:
+        score += int(media_info['video_bitrate']) * cfg['SCORE_VIDEOBITRATE']['multiplier']
+        log.debug("Added %d to score for video bitrate being %r", int(media_info['video_bitrate']) * cfg['SCORE_VIDEOBITRATE']['multiplier'], str(media_info['video_bitrate']), extra=log_tz)
     # add duration to score
     score += int(media_info['video_duration']) / 300
-    log.debug("Added %d to score for video duration", int(media_info['video_duration']) / 300)
+    log.debug("Added %d to score for video duration being %r", int(media_info['video_duration']) / 300, str(media_info['video_duration']), extra=log_tz)
     # add width to score
     score += int(media_info['video_width']) * 2
-    log.debug("Added %d to score for video width", int(media_info['video_width']) * 2)
+    log.debug("Added %d to score for video width being %r", int(media_info['video_width']) * 2, str(media_info['video_width']), extra=log_tz)
     # add height to score
-    score += int(media_info['video_height']) * 2
-    log.debug("Added %d to score for video height", int(media_info['video_height']) * 2)
+    score += int(media_info['video_height']) * cfg['VIDEO_HEIGHT_MULTIPLIER']
+    log.debug("Added %d to score for video height being %r", int(media_info['video_height']) * cfg['VIDEO_HEIGHT_MULTIPLIER'], str(media_info['video_height']), extra=log_tz)
     # add audio channels to score
-    score += int(media_info['audio_channels']) * 1000
-    log.debug("Added %d to score for audio channels", int(media_info['audio_channels']) * 1000)
+    if cfg['SCORE_AUDIOCHANNELS']:
+        score += int(media_info['audio_channels']) * 1000
+        log.debug("Added %d to score for audio channels being %r", int(media_info['audio_channels']) * 1000, str(media_info['audio_channels']), extra=log_tz)
     # add file size to score
     if cfg['SCORE_FILESIZE']:
         score += int(media_info['file_size']) / 100000
-        log.debug("Added %d to score for total file size", int(media_info['file_size']) / 100000)
+        log.debug("Added %d to score for total file size being %r", int(media_info['file_size']) / 100000, str(media_info['file_size']), extra=log_tz)
     return int(score)
 
 
@@ -131,6 +147,7 @@ def get_media_info(item):
         'video_height': 0,
         'video_duration': 0,
         'file': [],
+        'file_short': [],
         'multipart': False,
         'file_exists': True,  # Used with FIND_UNAVAILABLE
         'file_exts': {},      # Used with FIND_EXTRA_TS; It is an array whose keys are the file extensions and whose values are the count of media with that file extension
@@ -140,60 +157,62 @@ def get_media_info(item):
     try:
         info['id'] = item.id
     except AttributeError:
-        log.debug("Media item has no id")
+        log.debug("Media item has no id", extra=log_tz)
     # get bitrate
     try:
         info['video_bitrate'] = item.bitrate if item.bitrate else 0
     except AttributeError:
-        log.debug("Media item has no bitrate")
+        log.debug("Media item has no bitrate", extra=log_tz)
     # get video codec
     try:
         info['video_codec'] = item.videoCodec if item.videoCodec else 'Unknown'
     except AttributeError:
-        log.debug("Media item has no videoCodec")
+        log.debug("Media item has no videoCodec", extra=log_tz)
     # get video resolution
     try:
         info['video_resolution'] = item.videoResolution if item.videoResolution else 'Unknown'
     except AttributeError:
-        log.debug("Media item has no videoResolution")
+        log.debug("Media item has no videoResolution", extra=log_tz)
     # get video height
     try:
         info['video_height'] = item.height if item.height else 0
     except AttributeError:
-        log.debug("Media item has no height")
+        log.debug("Media item has no height", extra=log_tz)
     # get video width
     try:
         info['video_width'] = item.width if item.width else 0
     except AttributeError:
-        log.debug("Media item has no width")
+        log.debug("Media item has no width", extra=log_tz)
     # get video duration
     try:
         info['video_duration'] = item.duration if item.duration else 0
     except AttributeError:
-        log.debug("Media item has no duration")
+        log.debug("Media item has no duration", extra=log_tz)
     # get audio codec
     try:
         info['audio_codec'] = item.audioCodec if item.audioCodec else 'Unknown'
     except AttributeError:
-        log.debug("Media item has no audioCodec")
+        log.debug("Media item has no audioCodec", extra=log_tz)
     # get audio channels
     try:
         for part in item.parts:
             for stream in part.audioStreams():
                 if stream.channels:
-                    log.debug(f"Added {stream.channels} channels for {stream.title if stream.title else 'Unknown'} audioStream")
+                    log.debug(f"Added {stream.channels} channels for {stream.title if stream.title else 'Unknown'} audioStream", extra=log_tz)
                     info['audio_channels'] += stream.channels
         if info['audio_channels'] == 0:
             info['audio_channels'] = item.audioChannels if item.audioChannels else 0
 
     except AttributeError:
-        log.debug("Media item has no audioChannels")
+        log.debug("Media item has no audioChannels", extra=log_tz)
 
     # is this a multi part (cd1/cd2)
     if len(item.parts) > 1:
         info['multipart'] = True
     for part in item.parts:
         info['file'].append(part.file)
+        shortenedFilePath = os.path.join('/', *info['file'][0].split('/')[-3:])
+        info['file_short'].append(shortenedFilePath)
         info['file_size'] += part.size if part.size else 0
         if cfg['FIND_UNAVAILABLE'] and not part.exists:
             info['file_exists'] = False
@@ -207,17 +226,33 @@ def get_media_info(item):
 
     return info
 
+def delete_item(show_key, media_id, file_size, file_path):
+    global total_deleted_files, total_deleted_size
 
-def delete_item(show_key, media_id):
+    # Check if the file size is over 1 GB - print in MB if under or GB if over.
+    if file_size >= 1024 * 1024 * 1024:
+        file_size_str = "{:.2f} GB".format(file_size / (1024 * 1024 * 1024))
+    else:
+        file_size_str = "{:.2f} MB".format(file_size / (1024 * 1024))
+    
     delete_url = urljoin(cfg['PLEX_SERVER'], '%s/media/%d' % (show_key, media_id))
-    log.debug("Sending DELETE request to %r" % delete_url)
+    log.debug("Sending DELETE request to %r" % delete_url, extra=log_tz)
     if cfg['DRY_RUN']:
-        print("\t\tDRY RUN -- Would've deleted media item: %r" % media_id)
+        total_deleted_files += 1
+        total_deleted_size += file_size
+        print("\t\tDRY RUN -- ✨ Would've deleted media item: %r, Size: %s" % (file_path, file_size_str))
+        log.info("✨ Would have deleted file (DRY RUN): %r, Size: %s" % (file_path, file_size_str), extra=log_tz)
     else:
         if requests.delete(delete_url, headers={'X-Plex-Token': cfg['PLEX_TOKEN']}).status_code == 200:
-            print("\t\tDeleted media item: %r" % media_id)
+            total_deleted_files += 1
+            total_deleted_size += file_size
+            print("✨ Successfully deleted %r, Size: %s" % (file_path, file_size_str))
+            log.info("✨ Successfully deleted file: %r, Size: %s" % (file_path, file_size_str), extra=log_tz)
         else:
-            print("\t\tError deleting media item: %r" % media_id)
+            print("⚠️ Deletion failed %r, Size: %s" % (file_path, file_size_str))
+            log.info("⚠️ Deletion failed: %r, Size: %s" % (file_path, file_size_str), extra=log_tz)
+
+
 
 
 ############################################################
@@ -232,9 +267,12 @@ def write_decision(title=None, keeping=None, removed=None):
     if title:
         lines.append('\nTitle    : %s\n' % title)
     if keeping:
-        lines.append('\tKeeping  : %r\n' % keeping)
+        #lines.append('\tKeeping  : %r\n' % keeping)
+        lines.append('\tKeeping (%d): %r\n' % (keeping['score'], keeping))
     if removed:
-        lines.append('\tRemoving : %r\n' % removed)
+        #lines.append('\tRemoving : %r\n' % removed)
+        lines.append('\tRemoving (%d): %r\n' % (removed['score'], removed))
+
 
     with open(decision_filename, 'a') as fp:
         fp.writelines(lines)
@@ -314,7 +352,7 @@ def build_tabulated(parts, items):
             elif 'id' in k:
                 tmp.append(parts[item_id][k])
             elif 'file' in k:
-                tmp.append(parts[item_id][k])
+                tmp.append(parts[item_id]['file_short'])
             elif 'size' in k:
                 tmp.append(bytes_to_string(parts[item_id]['file_size']))
             elif 'duration' in k:
@@ -387,51 +425,54 @@ if __name__ == "__main__":
             else:
                 title = 'Unknown'
 
-            log.info("Processing: %r", title)
+            log.info("Processing: %r", title, extra=log_tz)
             # If we're looking for unavailable media, double-check the existence and log the latest status to debug
             if cfg['FIND_UNAVAILABLE']:
                 # If all files are already marked as available, log it and move on
                 if all(part.exists for media in item.media for part in media.parts):
-                    log.debug("All media is available for %s", item.title)
+                    log.debug("All media is available for %s", item.title, extra=log_tz)
                 # If any files are marked unavailable, tell Plex to recheck to verify
                 else:
-                    log.debug("Reloading %s", item.title)
+                    log.debug("Reloading %s", item.title, extra=log_tz)
                     item.reload(timeout=90) # Force a recheck if the media files exist
                 media = parts = {}
                 for media in item.media:
                     for part in media.parts:
-                        log.debug("%r,%r -- %s exists = %s; size = %s", media.id, part.id, part.file, part.exists, part.size)
+                        log.debug("%r,%r -- %s exists = %s; size = %s", media.id, part.id, part.file, part.exists, part.size, extra=log_tz)
             # loop returned parts for media item (copy 1, copy 2...)
             parts = {}
             for part in item.media:
                 part_info = get_media_info(part)
                 # Skip media if it was automatically generated by Plex for optimization
                 if part.isOptimizedVersion:
-                    log.info("ID: %r (%r) -- Skipping optimized version", part.id, part_info['file'])
-                    print("ID: %r (%r) -- Skipping optimized version" % (part.id, part_info['file']))
+                    log.info("ID: %r (%r) -- Skipping optimized version", part.id, part_info['file_short'], extra=log_tz)
+                    print("ID: %r (%r) -- Skipping optimized version" % (part.id, part_info['file_short']))
                     continue
                 # Check if the path contains "\\Plex Versions\\" since isOptimizedVersion is sometimes not being set correctly
                 elif cfg['SKIP_PLEX_VERSIONS_FOLDER'] and any("\\Plex Versions\\" in file_path for file_path in part_info['file']):
-                    log.info("ID: %r (%r) -- Skipping Plex Versions; isOptimizedVersion = %r", part.id, part_info['file'], part.isOptimizedVersion)
-                    print("ID: %r (%r) -- Skipping Plex Versions; isOptimizedVersion = %r" % (part.id, part_info['file'], part.isOptimizedVersion))
+                    log.info("ID: %r (%r) -- Skipping Plex Versions; isOptimizedVersion = %r", part.id, part_info['file_short'], part.isOptimizedVersion, extra=log_tz)
+                    print("ID: %r (%r) -- Skipping Plex Versions; isOptimizedVersion = %r" % (part.id, part_info['file_short'], part.isOptimizedVersion))
                     continue
                 # Log all other instances in case troubleshooting is needed
                 else:
-                    log.debug("ID: %r (%r) -- Including; isOptimizedVersion = %r", part.id, part_info['file'], part.isOptimizedVersion)
-                    # print("ID: %r (%r) -- Including; isOptimizedVersion = %r" % (part.id, part_info['file'], part.isOptimizedVersion))
+                    log.debug("ID: %r (%r) -- Including; isOptimizedVersion = %r", part.id, part_info['file_short'], part.isOptimizedVersion, extra=log_tz)
+                    # print("ID: %r (%r) -- Including; isOptimizedVersion = %r" % (part.id, part_info['file_short'], part.isOptimizedVersion))
                 if not cfg['FIND_DUPLICATE_FILEPATHS_ONLY']:
                     part_info['score'] = get_score(part_info)
                 part_info['show_key'] = item.key
-                log.info("ID: %r - Score: %s - Meta:\n%r", part.id, part_info.get('score', 'N/A'),
-                         part_info)
+                log.info("ID: %r - Score: %s - Meta:\n%r", part.id, part_info.get('score', 'N/A'), part_info, extra=log_tz)
                 parts[part.id] = part_info
             # If, after skipping media, we still have more than 1 file in the list, keep it on the list
             if len(parts) > 1:
                 process_later[title] = parts
             # Skip this media if we don't have at least 2 files left in the list
             else:
-                log.info("No duplicates after ignoring optimized versions for : %r", item.title)
+                log.info("No duplicates after ignoring optimized versions for : %r", item.title, extra=log_tz)
                 print("No duplicates after ignoring optimized versions for : %r" % item.title)
+
+    # Define global variables for stats
+    total_deleted_files = 0
+    total_deleted_size = 0
 
     # process processed items
     time.sleep(5)
@@ -446,17 +487,17 @@ if __name__ == "__main__":
                         write_decision(title=item)
                     # Even if Plex is reporting the file as nonexistent, skip it if it has a file size.  Plex sometimes reports files as missing even though they are accessible by Plex.
                     if part_info['file_size'] > 0:
-                        log.info("\tSkipping removal per file size (%r) : %r - %r", part_info['file_size'], media_id, part_info['file'])
-                        print("\tSkipping removal per file size (%r) : %r - %r" % (part_info['file_size'], media_id, part_info['file']))
+                        log.info("\tSkipping removal per file size (%r) : %r - %r", part_info['file_size'], media_id, part_info['file_short'], extra=log_tz)
+                        print("\tSkipping removal per file size (%r) : %r - %r" % (part_info['file_size'], media_id, part_info['file_short']))
                         continue
                     if should_skip(part_info['file']):
-                        log.info("\tSkipping removal per SKIP_LIST : %r - %r", media_id, part_info['file'])
-                        print("\tSkipping removal per SKIP_LIST : %r - %r" % (media_id, part_info['file']))
+                        log.info("\tSkipping removal per SKIP_LIST : %r - %r", media_id, part_info['file_short'], extra=log_tz)
+                        print("\tSkipping removal per SKIP_LIST : %r - %r" % (media_id, part_info['file_short']))
                         continue
                     else:
-                        log.info("Removing unavailable media : %r - %r (size: %r)", media_id, part_info['file'], part_info['file_size'])
-                        print("Removing unavailable media : %r - %r (size: %r)" % (media_id, part_info['file'], part_info['file_size']))
-                    delete_item(part_info['show_key'], media_id)
+                        log.info("Removing unavailable media : %r - %r (size: %r)", media_id, part_info['file_short'], part_info['file_size'], extra=log_tz)
+                        print("Removing unavailable media : %r - %r (size: %r)" % (media_id, part_info['file_short'], part_info['file_size']))
+                    delete_item(part_info['show_key'], media_id, part_info['file_size'], part_info['file_short'])
                     write_decision(removed=part_info)
                     time.sleep(2)
 
@@ -478,18 +519,18 @@ if __name__ == "__main__":
                                 title_decided = True
                                 write_decision(title=item)
                             if should_skip(part_info['file']):
-                                log.info("\tSkipping removal per SKIP_LIST : %r - %r", media_id, part_info['file'])
-                                print("\tSkipping removal per SKIP_LIST : %r - %r" % (media_id, part_info['file']))
+                                log.info("\tSkipping removal per SKIP_LIST : %r - %r", media_id, part_info['file_short'], extra=log_tz)
+                                print("\tSkipping removal per SKIP_LIST : %r - %r" % (media_id, part_info['file_short']))
                                 continue
                             else:
-                                log.info("Removing extra TS media : %r - %r", media_id, part_info['file'])
-                                print("Removing extra TS media : %r - %r" % (media_id, part_info['file']))
-                            delete_item(part_info['show_key'], media_id)
+                                log.info("Removing extra TS media : %r - %r", media_id, part_info['file_short'], extra=log_tz)
+                                print("Removing extra TS media : %r - %r" % (media_id, part_info['file_short']))
+                            delete_item(part_info['show_key'], media_id, part_info['file_size'], part_info['file_short'])
                             write_decision(removed=part_info)
                             time.sleep(2)
                         else:
                             # Not sure when this would happen, but let's note it.
-                            print("\tSkipping removal of %r as there is more than one file type that make up %r for %s." % (part_info['file'], media_id, item))
+                            print("\tSkipping removal of %r as there is more than one file type that make up %r for %s." % (part_info['file_short'], media_id, item))
 
         if not cfg['SKIP_OTHER_DUPES']:
             if not cfg['AUTO_DELETE']:
@@ -524,14 +565,17 @@ if __name__ == "__main__":
                     write_decision(title=item)
                     for media_id, part_info in parts.items():
                         if keep_item.lower() == 'b' and best_item is not None and best_item == part_info:
-                            print("\tKeeping  : %r" % media_id)
+                            #print("\tKeeping  : %r" % media_id)
+                            print("\tKeeping (%d): %r" % (part_info['score'], media_id))
                             write_decision(keeping=part_info)
                         elif keep_item.lower() != 'b' and len(media_items) and media_id == media_items[int(keep_item)]:
-                            print("\tKeeping  : %r" % media_id)
+                            #print("\tKeeping  : %r" % media_id)
+                            print("\tKeeping (%d): %r" % (part_info['score'], media_id))
                             write_decision(keeping=part_info)
                         else:
-                            print("\tRemoving : %r" % media_id)
-                            delete_item(part_info['show_key'], media_id)
+                            #print("\tRemoving : %r" % media_id)
+                            print("\tRemoving (%d): %r" % (part_info['score'], media_id))
+                            delete_item(part_info['show_key'], media_id, part_info['file_size'], part_info['file_short'])
                             write_decision(removed=part_info)
                             time.sleep(2)
                 elif keep_item.lower() == 's' or int(keep_item) == 0:
@@ -541,6 +585,7 @@ if __name__ == "__main__":
             else:
                 # auto delete
                 print("\nDetermining best media item to keep for %r ..." % item)
+                #print("\n> %r" % item)
                 keep_score = 0
                 keep_id = None
 
@@ -564,16 +609,26 @@ if __name__ == "__main__":
                     # delete other items
                     write_decision(title=item)
                     for media_id, part_info in parts.items():
+                        formatedScore = '{:,}'.format(part_info['score'])
                         if media_id == keep_id:
-                            print("\tKeeping  : %r - %r" % (media_id, part_info['file']))
+                            print("✅%s🔺 %s 🆔%d" % (formatedScore, part_info['file_short'], media_id))
                             write_decision(keeping=part_info)
                         else:
                             print("\tRemoving : %r - %r" % (media_id, part_info['file']))
                             if should_skip(part_info['file']):
-                                print("\tSkipping removal of this item as there is a match in SKIP_LIST")
-                                continue
-                            delete_item(part_info['show_key'], media_id)
-                            write_decision(removed=part_info)
-                            time.sleep(2)
+                                print("☑️%s🔺 %s 🆔%d" % (formatedScore, part_info['file_short'], media_id))
+                            else:
+                                print("❌%s🔺 %s 🆔%d" % (formatedScore, part_info['file_short'], media_id))
+                                delete_item(part_info['show_key'], media_id, part_info['file_size'], part_info['file_short'])
+                                write_decision(removed=part_info)
+                                time.sleep(2)
                 else:
                     print("Unable to determine best media item to keep for %r", item)
+    
+    # Print/log stats 
+    total_deleted_size_gb = total_deleted_size / (1024 * 1024 * 1024)
+    print("Total Deleted Files:", total_deleted_files)
+    log.info("Total Deleted Files: %r", total_deleted_files, extra=log_tz)
+    print("Total Deleted Size (GB): {:.2f}".format(total_deleted_size_gb))
+    log.info("Total Deleted Size (GB): {:.2f}".format(total_deleted_size_gb), extra=log_tz)
+
